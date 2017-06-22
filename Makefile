@@ -19,7 +19,7 @@ SRC += $(wildcard *.c)
 #
 # Define linker script files:
 #
-LIBS = -lbluetooth  -lpthread #-lgattlib
+LIBS = -lbluetooth  -lpthread  -lgattlib
 
 #
 # .c to .o recursion magic:

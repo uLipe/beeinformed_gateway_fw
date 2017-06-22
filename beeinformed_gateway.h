@@ -27,11 +27,15 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <fcntl.h>
-
+#include <sys/stat.h>
 
 /* gattlib to use Bluetooth low energy */
-//#include "gattlib.h"
+#include "gattlib.h"
 
+/* include subapps here */
+#include "beeinfo_include/app_ble.h"
+#include "beeinfo_include/app_gps.h"
+#include "beeinfo_include/app_gps.h"
 
 
 #endif
