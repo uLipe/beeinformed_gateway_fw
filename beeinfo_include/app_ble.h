@@ -7,6 +7,10 @@
  #ifndef __APP_BLE_H
  #define __APP_BLE_H
 
+/** maximum payload in bytes */
+#define PACKET_MAX_PAYLOAD 28
+
+
 /** app ble data type tags */
 typedef enum {
     k_ble_gps_tag = 1,
@@ -14,6 +18,36 @@ typedef enum {
     k_ble_node_requisition_tag
 }app_ble_data_tag_t;
 
+/** over BLE protocol data and relevant commands */
+
+/** packet types */
+typedef enum {
+	k_command_packet = 0,
+	k_data_packet,
+}pack_type_t;
+
+/** command list */
+typedef enum {
+	k_get_temp = 1,
+	k_get_humi,
+	k_get_press,
+	k_get_audio,
+	k_get_lumi,
+	k_get_status,
+	k_reboot,
+	k_set_alarm_period,
+}edge_cmds_t;
+
+
+/** packet structure */
+typedef struct {
+	pack_type_t type;
+	uint8_t id;
+	uint16_t pack_amount;
+	uint16_t pack_nbr;
+	uint16_t payload_size;
+	uint8_t pack_data[PACKET_MAX_PAYLOAD];
+}ble_data_t;
 
 /**
  *  @fn beeinformed_app_ble_start()
