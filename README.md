@@ -6,8 +6,10 @@
 
 
 # Basic usage
-- Clone this repository and created a build folder: mkdir build
+- Clone this repository cd to it
 - Then make the application: Make all
-- run the application with: ./beeinformed_gat
+- run the application with: ./beeinformed_gateway.out
+- alternatively you can rebuild the app by: make clean then make all
+
 
 
