@@ -29,8 +29,7 @@ OBJS  = $(SRC:.c=.o)
 #
 # Define the build chain:
 #
-.PHONY: all, clean,connect,debug_jlink,debug
-
+.PHONY: all, clean
 
 all: $(OUTFILE).out
 	@echo "[BIN]: Generated the $(OUTFILE).out binary file!"
