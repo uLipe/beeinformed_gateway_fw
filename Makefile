@@ -5,7 +5,7 @@
 CC=gcc
 LD=gcc
 GDB=gdb
-CFLAGS=-g -c -O3
+CFLAGS=-g -c -O3 -Ibeeinfo_include
 LDFLAGS=-g  
 OUTFILE?=beeinformed_fw
 #

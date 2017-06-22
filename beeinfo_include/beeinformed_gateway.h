@@ -33,9 +33,9 @@
 #include "gattlib.h"
 
 /* include subapps here */
-#include "beeinfo_include/app_ble.h"
-#include "beeinfo_include/app_gps.h"
-#include "beeinfo_include/app_gps.h"
+#include "app_ble.h"
+#include "app_gps.h"
+#include "app_gps.h"
 
 
 #endif
