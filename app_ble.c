@@ -11,16 +11,29 @@
 /** scan timeout value */
 #define BEEINFO_BLE_DEF_TIMEOUT  10 
 
+
 /** define the sleep period in seconds */
 #define BEEINFO_BLE_SCAN_SLEEP_TIME (1000 * 1000 * 10)
+#define BEEINFO_BLE_ACQ_PERIOD      (1000 * 1000 * 60)
+
+/** characteristics handle */
+#define BLE_TX_HANDLE       0x0010
+#define BLE_RX_HANDLE       0x0012
+#define BLE_NOTI_HANDLE     0x0013
+
 
 
 /** conection manager structure */
 struct ble_conn_handle {
     pthread_t ble_device_thread;
     gatt_connection_t *conn_handle;
+    gattlib_primary_service_t* services;
+    gattlib_characteristic_t* characteristics;
+    int services_count; 
+    int characteristics_count;
     char device_name[MAX_NAME_SIZE];
     char bd_addr[MAX_NAME_SIZE];
+    char uuid_str[2*MAX_NAME_SIZE];
     bool new_device;
     LIST_ENTRY(ble_conn_handle) entries;
 };
@@ -33,6 +46,9 @@ LIST_HEAD(listhead,ble_conn_handle) ble_connections;
 static bool ble_conn_should_run = true;
 static void* hci_adapter = NULL;
 static FILE *cfg;
+static acqui_st_t data_env;
+
+
 
 /** static funcions */
 
@@ -46,7 +62,121 @@ static FILE *cfg;
 static bool ble_add_device_to_list(FILE *fp, struct ble_conn_handle *h)
 {
     bool ret = true;
+
+    /* this should never happen */
+    assert(h != NULL);
+    assert(fp != NULL);
+
     return(ret);
+}
+
+
+
+/**
+ *  @fn ble_rx_handler()
+ *  @brief handles the incoming data from BLE device 
+ *  @param
+ *  @return
+ */
+static void ble_rx_handler(const uuid_t* uuid, const uint8_t* data, size_t data_length, void* user_data) 
+{
+
+}
+
+
+/**
+ *  @fn ble_rx_handler()
+ *  @brief sends commands in overBLE format 
+ *  @param
+ *  @return
+ */
+static int  ble_send_packet(ble_data_t *b)
+{
+
+}
+
+/**
+ *  @fn ble_receive_packet()
+ *  @brief waits for a incoming overBLE packet 
+ *  @param
+ *  @return
+ */
+static int  ble_receive_packet(ble_datat_t *b)
+{
+
+}
+
+/**
+ *  @fn ble_device_handle_acquisition()
+ *  @brief handles device acquisition  
+ *  @param
+ *  @return
+ */
+static void ble_device_handle_acquisition(struct ble_conn_handle *h)
+{
+    /* once the acquisition period was reached 
+     * we need to perform acquisitions from host 
+     */
+
+
+    /* this should never happen */
+    assert(h != NULL);
+
+}
+
+/**
+ *  @fn ble_discover_service_and_enable_listening()
+ *  @brief discover device characteristics and enable notification
+ *  @param
+ *  @return
+ */
+static void ble_discover_service_and_enable_listening(struct ble_conn_handle *h);
+{
+    int ret;
+
+    /* this should never happen */
+    assert(h != NULL);
+    
+
+    /* discover device characteristic and services */
+    ret = gattlib_discover_primary(h->conn_handle, &h->services, &h->services_count);
+	if (ret != 0) {
+		fprintf(stderr, "Fail to discover primary services.\n");
+		goto cleanup;
+	}
+
+	for (int i = 0; i < h->services_count; i++) {
+		gattlib_uuid_to_string(&h->services[i].uuid, h->uuid_str, sizeof(uuid_str));
+
+		printf("%s: service[%d] start_handle:%02x end_handle:%02x uuid:%s\n",__func__, i,
+				h->services[i].attr_handle_start, h->services[i].attr_handle_end,
+				h->uuid_str);
+	}
+
+	ret = gattlib_discover_char(h->conn_handle, &h->characteristics, &h->characteristics_count);
+	if (ret != 0) {
+		fprintf(stderr, "Fail to discover characteristics.\n");
+		goto cleanup;
+	}
+	for (int i = 0; i < h->characteristics_count; i++) {
+		gattlib_uuid_to_string(&h->characteristics[i].uuid, h->uuid_str, sizeof(uuid_str));
+
+		printf("%s: characteristic[%d] properties:%02x value_handle:%04x uuid:%s\n", __func__, i,
+				h->characteristics[i].properties, h->characteristics[i].value_handle,
+				h->uuid_str);
+	}
+
+
+    /* enable listening by setting nofitication and read characteristic
+     * bitmask
+     */
+    uint16_t enable_notification = 0x0001;
+	gattlib_write_char_by_handle(h->ble_conn_handle, BLE_NOTI_HANDLE, &enable_notification, sizeof(enable_notification));
+    gattlib_register_notification(h->ble_conn_handle, ble_rx_handler, NULL);
+
+cleanup:
+    return;
+
 }
 
 /**
@@ -64,7 +194,7 @@ static void *ble_device_manager_thread(void *args)
     char aud_path[MAX_NAME_SIZE]={0};
     char acq_path[MAX_NAME_SIZE]={0};
 
-
+    
     printf("%s:-------------- NEW DEVICE PROCESS STARTED! ----------------\n\r", __func__);
     strcat(root_path, "beeinformed/");
     strcat(root_path, handle->bd_addr);
@@ -103,11 +233,19 @@ static void *ble_device_manager_thread(void *args)
 			printf("%s: Succeeded to connect to the bluetooth device.\n\r", __func__);
 	}
 
+    /* enable the notifications and gets the service database */
+    printf("%s:---------- DISCOVERING BEEINFORMED EDGE BLE DATABASE -----------\n\r", __func__);
+    ble_discover_service_and_enable_listening(handle);
+    printf("%s:---------- DISCOVERED BEEINFORMED EDGE BLE DATABASE -----------\n\r", __func__);
+
     /* connection estabilished, now just manages the device
      * until connection closes
      */
      while(handle->conn_handle != NULL) {
-        usleep(BEEINFO_BLE_SCAN_SLEEP_TIME);
+        printf("%s:-------------- TIME TO ACQUIRE DATA ----------------\n\r", __func__);
+        ble_device_handle_acquisition(handle);
+        printf("%s:-------------- END OF ACQUISITION PROCESS ----------------\n\r", __func__);
+        usleep(BEEINFO_BLE_ACQ_PERIOD);
      }
 
 cleanup:
@@ -133,6 +271,7 @@ static void ble_discovered_device(const char* addr, const char* name) {
         
 
         struct ble_conn_handle *handle = malloc(sizeof(struct ble_conn_handle));
+        memset(handle, 0, sizeof(struct ble_conn_handle));
         assert(handle != NULL);
 
         /* gets the device information */
@@ -187,7 +326,9 @@ static void *ble_connection_manager_thread(void *args)
         gattlib_disconnect(connection->conn_handle);
         pthread_join(connection->ble_device_thread, NULL);
 		LIST_REMOVE(ble_connections.lh_first, entries);
-		free(connection);
+		free(connection->services);
+		free(connection->characteristics);        
+        free(connection);
 	}
 
     gattlib_adapter_close(hci_adapter);
@@ -200,6 +341,7 @@ void beeinformed_app_ble_start(FILE *fp)
 {
     int ret = 0;
     assert(fp != NULL);
+    memset(&data_env, 0, sizeof(data_env));
 
     /* perform some basic initialization and open the bt adapter */
 	LIST_INIT(&ble_connections);

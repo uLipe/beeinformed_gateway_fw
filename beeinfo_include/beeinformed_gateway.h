@@ -14,6 +14,8 @@
  *  @return
  */
 
+ #define MAX_NAME_SIZE 		128
+
 /* include standard libc needed files here */
 #include <assert.h>
 #include <stdio.h>
@@ -33,11 +35,14 @@
 /* gattlib to use Bluetooth low energy */
 #include "gattlib.h"
 
+
+
 /* include subapps here */
 #include "app_ble.h"
 #include "app_gps.h"
-#include "app_gps.h"
-
+#include "app_cli.h"
+#include "app_acq_file.h"
+#include "app_bin_sema.h"
 
 
 #endif
