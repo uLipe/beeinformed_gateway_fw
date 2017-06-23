@@ -101,7 +101,7 @@ static bool ble_add_device_to_list(FILE *fp, struct ble_conn_handle *h)
        ret = true;
     }
 
-
+    fseek(fp, 0, saved);
     pthread_mutex_unlock(&cfg_mutex);
     return(ret);
 }
