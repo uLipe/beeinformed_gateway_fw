@@ -72,8 +72,8 @@ static void *ble_device_manager_thread(void *args)
     strcat(aud_path,"/audio.dat");
     
     strcat(acq_path, root_path);
-    strcat(acq_path,"/");
     strcat(acq_path,"/beedata.csv");
+
     printf("%s:-------------- SETTING BEE DEVICE ENVIRONMENT ----------------\n\r", __func__);
     printf("%s: Audio File: %s \n\r", __func__, aud_path);
     printf("%s: Hive environment File: %s \n\r", __func__, acq_path);
@@ -97,10 +97,10 @@ static void *ble_device_manager_thread(void *args)
 			fprintf(stderr, "Fail to connect to the bluetooth device.\n");
 			goto cleanup;
 		} else {
-			puts("Succeeded to connect to the bluetooth device with random address.");
+			printf("%s: Succeeded to connect to the bluetooth device with random address.\n\r", __func__);
 		}
 	} else {
-		puts("Succeeded to connect to the bluetooth device.");
+			printf("%s: Succeeded to connect to the bluetooth device.\n\r", __func__);
 	}
 
     /* connection estabilished, now just manages the device
@@ -165,7 +165,6 @@ static void *ble_connection_manager_thread(void *args)
          * to each new device 
          */
         printf("%s:-----------------STARTING NEW BLE SCAN CICLE! -----------------------\n\r", __func__);
-        pthread_mutex_lock(&ble_mutex);
         ret = gattlib_adapter_scan_enable(hci_adapter, ble_discovered_device, 
                         BEEINFO_BLE_DEF_TIMEOUT);
     
@@ -173,7 +172,6 @@ static void *ble_connection_manager_thread(void *args)
 		    fprintf(stderr, "ERROR: Failed to scan.\n");
         }
         gattlib_adapter_scan_disable(hci_adapter);
-        pthread_mutex_unlock(&ble_mutex);
         printf("%s:------------------SCANNING COMPLETE SLEEPING!-------------------------\n\r", __func__);
         usleep(BEEINFO_BLE_SCAN_SLEEP_TIME);
     }
