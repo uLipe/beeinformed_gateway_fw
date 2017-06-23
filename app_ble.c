@@ -21,6 +21,7 @@ struct ble_conn_handle {
     gatt_connection_t *conn_handle;
     char device_name[MAX_NAME_SIZE];
     char bd_addr[MAX_NAME_SIZE];
+    bool new_device;
     LIST_ENTRY(ble_conn_handle) entries;
 };
 
@@ -31,8 +32,89 @@ static pthread_mutex_t ble_mutex = PTHREAD_MUTEX_INITIALIZER;
 LIST_HEAD(listhead,ble_conn_handle) ble_connections;
 static bool ble_conn_should_run = true;
 static void* hci_adapter = NULL;
+static FILE *cfg;
 
 /** static funcions */
+
+
+/**
+ *  @fn ble_add_device_to_list()
+ *  @brief handles device discovering 
+ *  @param
+ *  @return
+ */
+static bool ble_add_device_to_list(FILE *fp, struct ble_conn_handle *h)
+{
+    bool ret = true;
+    return(ret);
+}
+
+/**
+ *  @fn ble_device_manager_thread()
+ *  @brief handles device discovering 
+ *  @param
+ *  @return
+ */
+static void *ble_device_manager_thread(void *args)
+{
+    struct ble_conn_handle *handle = args;
+    FILE *fp_acq;
+    FILE *fp_audio;
+    char root_path[MAX_NAME_SIZE]={0};
+    char aud_path[MAX_NAME_SIZE]={0};
+    char acq_path[MAX_NAME_SIZE]={0};
+
+
+    printf("%s:-------------- NEW DEVICE PROCESS STARTED! ----------------\n\r", __func__);
+    strcat(root_path, "beeinformed/");
+    strcat(root_path, handle->bd_addr);
+    strcat(aud_path, root_path);
+    strcat(aud_path,"/audio.dat");
+    
+    strcat(acq_path, root_path);
+    strcat(acq_path,"/");
+    strcat(acq_path,"/beedata.csv");
+    printf("%s:-------------- SETTING BEE DEVICE ENVIRONMENT ----------------\n\r", __func__);
+    printf("%s: Audio File: %s \n\r", __func__, aud_path);
+    printf("%s: Hive environment File: %s \n\r", __func__, acq_path);
+    printf("%s:---------------------------------------------------------------\n\r", __func__);
+    
+    if(handle->new_device) {
+        mkdir(root_path,0777);
+    }
+    /* obtains the acquisition file of the device */
+
+    fp_acq =fopen(acq_path, "ar");
+    fp_audio =fopen(aud_path, "ar");
+    assert(fp_audio != NULL);
+    assert(fp_acq != NULL);
+
+    /* obtains device connection handle */
+    handle->conn_handle = gattlib_connect(NULL, handle->bd_addr, BDADDR_LE_PUBLIC, BT_SEC_LOW, 0, 0);
+	if (handle->conn_handle == NULL) {
+		handle->conn_handle = gattlib_connect(NULL, handle->bd_addr, BDADDR_LE_RANDOM, BT_SEC_LOW, 0, 0);
+		if (handle->conn_handle == NULL) {
+			fprintf(stderr, "Fail to connect to the bluetooth device.\n");
+			goto cleanup;
+		} else {
+			puts("Succeeded to connect to the bluetooth device with random address.");
+		}
+	} else {
+		puts("Succeeded to connect to the bluetooth device.");
+	}
+
+    /* connection estabilished, now just manages the device
+     * until connection closes
+     */
+     while(handle->conn_handle != NULL) {
+        usleep(BEEINFO_BLE_SCAN_SLEEP_TIME);
+     }
+
+cleanup:
+    printf("%s:-------------- EDGE DEVICE THREAD TERMINATING! ----------------\n\r", __func__);
+    return(NULL);
+}
+
 
 /**
  *  @fn ble_discovered_device()
@@ -41,11 +123,30 @@ static void* hci_adapter = NULL;
  *  @return
  */
 static void ble_discovered_device(const char* addr, const char* name) {
-    printf("%s:------------------ DEVICE DISCOVERED! ------------------\n\r", __func__);
-    printf("%s: NAME: %s \n\r", __func__, name);
-    printf("%s: BD_ADDRESS: %s \n\r", __func__, addr);
-    printf("%s:--------------------------------------------------------\n\r", __func__);
+    int ret;
     
+    if(!strcmp(name, "beeinformed_edge")) {
+        printf("%s:------------------ DEVICE DISCOVERED! ------------------\n\r", __func__);
+        printf("%s: NAME: %s \n\r", __func__, name);
+        printf("%s: BD_ADDRESS: %s \n\r", __func__, addr);
+        printf("%s:--------------------------------------------------------\n\r", __func__);
+        
+
+        struct ble_conn_handle *handle = malloc(sizeof(struct ble_conn_handle));
+        assert(handle != NULL);
+
+        /* gets the device information */
+        strcpy(&handle->bd_addr[0], addr);
+        strcpy(&handle->device_name[0], addr);
+        handle->new_device = ble_add_device_to_list(cfg, handle);
+
+        /* creates and starts the device thread */
+        ret = pthread_create(&handle->ble_device_thread, NULL,ble_device_manager_thread, handle);
+        if(ret) {
+            fprintf(stderr, "ERROR: Failed to start ble device manager.\n");
+        }
+        
+    }
 }
 
 /**
@@ -111,11 +212,13 @@ void beeinformed_app_ble_start(FILE *fp)
 	}
 
     /* creates and starts the connman thread */
-    ret = pthread_create(&ble_conn_thread, NULL,ble_connection_manager_thread, fp);
+    ret = pthread_create(&ble_conn_thread, NULL,ble_connection_manager_thread, NULL);
     if(ret) {
 		fprintf(stderr, "ERROR: Failed to start ble conn manager.\n");
         goto cleanup;        
     }
+
+    cfg = fp;
 
 cleanup:
     return;
