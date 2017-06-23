@@ -8,7 +8,8 @@
  #define __APP_BLE_H
 
 /** maximum payload in bytes */
-#define PACKET_MAX_PAYLOAD 28
+#define PACKET_MAX_PAYLOAD 	28
+#define MAX_NAME_SIZE 		64
 
 
 /** app ble data type tags */

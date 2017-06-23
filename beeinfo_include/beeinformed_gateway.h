@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <stddef.h>
 #include <string.h>
@@ -36,6 +37,7 @@
 #include "app_ble.h"
 #include "app_gps.h"
 #include "app_gps.h"
+
 
 
 #endif
