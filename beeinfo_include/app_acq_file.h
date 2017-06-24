@@ -11,7 +11,7 @@
 
 /** app data  acq type tags */
 typedef enum {
-    k_tag_acq_time =1
+    k_tag_acq_time =1,
     k_tag_temperaure,
     k_tag_humidity,
     k_tag_pressure,
@@ -22,7 +22,7 @@ typedef enum {
 /* ASCII version */
 typedef struct {
     char acq_time[MAX_NAME_SIZE];
-    char temperaure[MAX_NAME_SIZE];
+    char temperature[MAX_NAME_SIZE];
     char humidity[MAX_NAME_SIZE];
     char pressure[MAX_NAME_SIZE];
     char luminosity[MAX_NAME_SIZE];
@@ -30,8 +30,8 @@ typedef struct {
 
 /* binary version */
 typedef struct {
-    uin32_t     acq_time;
-    uint32_t    temperaure;
+    uint32_t     acq_time;
+    uint32_t    temperature;
     uint32_t    humidity;
     uint32_t    pressure;
     uint32_t    luminosity;

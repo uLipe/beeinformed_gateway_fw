@@ -9,12 +9,12 @@
 /** default adapter name */
 #define BEEINFO_BLE_DEF_ADAPTER         "hci0"
 /** scan timeout value */
-#define BEEINFO_BLE_DEF_TIMEOUT         10 
+#define BEEINFO_BLE_DEF_TIMEOUT         60
 
 
 /** define the sleep period in seconds */
 #define BEEINFO_BLE_SCAN_SLEEP_TIME     (1000 * 1000 * 10)
-#define BEEINFO_BLE_ACQ_PERIOD          (1000 * 1000 * 60)
+#define BEEINFO_BLE_ACQ_PERIOD          (1000 * 1000 * 10)
 
 /** characteristics handle */
 #define BLE_TX_HANDLE                   0x0010
@@ -28,6 +28,7 @@
 /** connected device manager structure */
 struct ble_conn_handle {
     pthread_t ble_device_thread;
+    pthread_attr_t ble_dev_att;
     gatt_connection_t *conn_handle;
     gattlib_primary_service_t* services;
     gattlib_characteristic_t* characteristics;
@@ -35,6 +36,8 @@ struct ble_conn_handle {
     acqui_st_t data_env;
     uint8_t ble_rx_buf[2*sizeof(ble_data_t)];
     uint8_t rxpos;
+    int timestamp;
+    bool should_run;
     int services_count; 
     int characteristics_count;
     char device_name[MAX_NAME_SIZE];
@@ -47,8 +50,12 @@ struct ble_conn_handle {
 
 /** static variables */
 static pthread_t ble_conn_thread;
+static pthread_attr_t ble_conn_att;
+
 static pthread_mutex_t ble_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t tx_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t cfg_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 LIST_HEAD(listhead,ble_conn_handle) ble_connections;
 static bool ble_conn_should_run = true;
 static void* hci_adapter = NULL;
@@ -85,11 +92,16 @@ static bool ble_add_device_to_list(FILE *fp, struct ble_conn_handle *h)
 
     while(ftell(fp) < size) {
         /* reads one entry of the config file */
-        fread ( buf, 1, strlen(h->bd_addr), fp );
+        int b_read = fread ( buf, 1, strlen(h->bd_addr), fp );
+        if(b_read != strlen(h->bd_addr)) {
+            printf("%s: Warn: files seems to be corrupted! \n\r", __func__);
+            break;
+        }
+
         /* compare if the entry already exist */
         if(!strcmp(h->bd_addr, buf)) {
             printf("%s:----------------DEVICE FOUND IT ACQUISITION WILL BE RESTORED ------------\n\r", __func__);
-            found = true;
+            found = false;
             break;
         } 
     }
@@ -107,6 +119,37 @@ static bool ble_add_device_to_list(FILE *fp, struct ble_conn_handle *h)
 }
 
 
+/**
+ *  @fn ble_cmd_handler()
+ *  @brief handles device receiving data 
+ *  @param
+ *  @return
+ */
+static void ble_cmd_handler(ble_data_t *b, struct ble_conn_handle *h)
+{
+	edge_cmds_t cmd = (edge_cmds_t)b->id;
+
+	switch(cmd) {
+	case k_get_temp:
+        memcpy(&h->data_env.temperature, b->pack_data, b->payload_size);    
+		break;
+	case k_get_humi:
+        memcpy(&h->data_env.humidity, b->pack_data, b->payload_size);    
+
+		break;
+	case k_get_press:
+        memcpy(&h->data_env.pressure, b->pack_data, b->payload_size);    
+		break;
+	case k_get_audio:
+		break;
+	case k_get_lumi:
+        memcpy(&h->data_env.luminosity, b->pack_data, b->payload_size);    
+        break;
+	default:
+		printf("%s: Unknown command, packet will not processed! \n\r", __func__);
+        break;
+	}
+}
 
 /**
  *  @fn ble_rx_handler()
@@ -126,47 +169,19 @@ static void ble_rx_handler(const uuid_t* uuid, const uint8_t* data, size_t data_
 
     h->rxpos += data_length;
     if(h->rxpos >= sizeof(ble_data_t)) {
-        h->rxpos = 0;
-        /* complete packet arrived, signal the waiting device manager */
-        bin_sem_post(&h->rx_sema);
-        printf("%s: complete ble packet arrived! \n\r", __func__);
-    }
-}
-
-/**
- *  @fn ble_rx_handler()
- *  @brief sends commands in overBLE format 
- *  @param
- *  @return
- */
-static int  ble_send_packet(ble_data_t *b, struct ble_conn_handle *h)
-{
-    int ret;
-    assert(b != NULL);
-    assert(h != NULL);
-    uint8_t len = sizeof(ble_data_t);
-    uint8_t txpos = 0;
-
-    pthread_mutex_lock(&ble_mutex);
-
-    /* cuts the packet in 20 byte slices and send using the characteristic
-     * write
-     */
-    while(len) {
-        uint8_t size = (len < BLE_DATA_SVC_MAX_SIZE )? len: BLE_DATA_SVC_MAX_SIZE;
-        ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, b+txpos , size);
-        if(ret) {
-            ret = -1;
-            goto cleanup;
+        if(((ble_data_t *)&h->ble_rx_buf)->type != k_data_packet) {
+            printf("%s: Device: %d will NOT receive this ble data! \n\r", __func__, h);
+            h->rxpos = 0;
+        } else {
+            ble_data_t rx_packet;
+            h->rxpos = 0;
+            printf("%s: complete ble packet arrived! \n\r", __func__);
+            printf("%s: Device: %d will receive this ble data! \n\r", __func__, h);
+        
+            memcpy(&rx_packet, &h->ble_rx_buf, sizeof(ble_data_t));
+            ble_cmd_handler(&rx_packet, h);
         }
-
-        txpos += size;
-        len =  (len < BLE_DATA_SVC_MAX_SIZE ) ? (len - BLE_DATA_SVC_MAX_SIZE) : 0; 
     }
-    ret = 0;
-cleanup:
-    pthread_mutex_unlock(&ble_mutex);
-    return(ret);    
 }
 
 /**
@@ -175,7 +190,7 @@ cleanup:
  *  @param
  *  @return
  */
-static int  ble_receive_packet(ble_data_t *b, struct ble_conn_handle *h)
+static inline int  ble_receive_packet(ble_data_t *b, struct ble_conn_handle *h)
 {
     int ret = 0;
     assert(b != NULL);
@@ -183,6 +198,10 @@ static int  ble_receive_packet(ble_data_t *b, struct ble_conn_handle *h)
 
     bin_sem_wait(&h->rx_sema);
     memcpy(b, &h->ble_rx_buf, sizeof(ble_data_t));
+
+    printf("%s: rx_packet.type: 0x%X  \n\r", __func__, b->type);
+    printf("%s: rx_packet.id: 0x%X  \n\r", __func__, b->id);
+    printf("%s: rx_packet.payload_size: %d \n\r", __func__, b->payload_size);
 
     return(ret);
 }
@@ -194,8 +213,9 @@ static int  ble_receive_packet(ble_data_t *b, struct ble_conn_handle *h)
  *  @param
  *  @return
  */
-static void ble_device_handle_audio(struct ble_conn_handle *h, FILE *fp)
+static inline void ble_device_handle_audio(struct ble_conn_handle *h, FILE *fp)
 {
+
 
 }
 
@@ -206,7 +226,7 @@ static void ble_device_handle_audio(struct ble_conn_handle *h, FILE *fp)
  *  @param
  *  @return
  */
-static void ble_device_handle_acquisition(struct ble_conn_handle *h)
+static inline void ble_device_handle_acquisition(struct ble_conn_handle *h)
 {
 
     ble_data_t tx_packet={0};
@@ -220,84 +240,47 @@ static void ble_device_handle_acquisition(struct ble_conn_handle *h)
     /* once the acquisition period was reached 
      * we need to perform acquisitions from host 
      */
-
      /* gets the temperature from edge */
-     tx_packet.pack_type = k_command_packet;
+     tx_packet.type = k_command_packet;
      tx_packet.id = k_get_temp;
-     ret = ble_send_packet(&tx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive temperature.\n");
-     }else {
-        printf("%s:-------------- REQUESTING BEEHIVE TEMPERATURE! ----------------\n\r", __func__);
-     }
 
-     ret = ble_receive_packet(&rx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive temperature.\n");
-     }else {
-        printf("%s:-------------- GOT BEEHIVE TEMPERATURE! ----------------\n\r", __func__);
-        h->data_env.temperaure = *((uint32_t *)&rx_packet.pack_data[0]);
-        printf("%s:-------------- VALUE IS: %d [mDeg] ----------------\n\r", __func__, h->data_env.temperaure);
-     }
-    
+    /* dispatch packet */    
+    ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, &tx_packet , sizeof(ble_data_t));
+    if(ret) {
+        printf("%s: packet failed to send! \n\r", __func__);
+        ret = -1;
+    }    
+    printf("%s:-------------- REQUESTING BEEHIVE TEMPERATURE! ----------------\n\r", __func__);
 
-
-     /* gets the humidity from the beehive environment */
      tx_packet.id = k_get_humi;
-     ret = ble_send_packet(&tx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive environment humidity.\n");
-     }else {
-        printf("%s:-------------- REQUESTING BEEHIVE HUMIDITY! ----------------\n\r", __func__);
-     }
+    /* dispatch packet */
+    ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, &tx_packet , sizeof(ble_data_t));
+    if(ret) {
+        printf("%s: packet failed to send! \n\r", __func__);
+        ret = -1;
+    }      
+    printf("%s:-------------- REQUESTING BEEHIVE HUMIDITY! ----------------\n\r", __func__);
 
-     ret = ble_receive_packet(&rx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive environment humidity.\n");
-     }else {
-        printf("%s:-------------- GOT BEEHIVE HUMIDITY! ----------------\n\r", __func__);
-        h->data_env.humidity = *((uint32_t *)&rx_packet.pack_data[0]);
-        printf("%s:-------------- VALUE IS: %d [Percent] ----------------\n\r", __func__, h->data_env.temperaure);
-     }
+        /* gets the pressure from the beehive environment */
+        tx_packet.id = k_get_press;
+        /* dispatch packet */
+    ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, &tx_packet , sizeof(ble_data_t));
+    if(ret) {
+        printf("%s: packet failed to send! \n\r", __func__);
+        ret = -1;
+    }
+    printf("%s:-------------- REQUESTING BEEHIVE PRESSURE! ----------------\n\r", __func__);
 
-
-     /* gets the pressure from the beehive environment */
-     tx_packet.id = k_get_press;
-     ret = ble_send_packet(&tx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive environment pressure.\n");
-     }else {
-        printf("%s:-------------- REQUESTING BEEHIVE PRESSURE! ----------------\n\r", __func__);
-     }
-
-     ret = ble_receive_packet(&rx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive environment pressure.\n");
-     }else {
-        printf("%s:-------------- GOT BEEHIVE PRESSURE! ----------------\n\r", __func__);
-        h->data_env.pressure = *((uint32_t *)&rx_packet.pack_data[0]);
-        printf("%s:-------------- VALUE IS: %d [Pa] ----------------\n\r", __func__, h->data_env.pressure);
-     }
-
-
-
-     /* gets the luminosity from the beehive environment */
-     tx_packet.id = k_get_lumi;
-     ret = ble_send_packet(&tx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive environment luminosity.\n");
-     }else {
-        printf("%s:-------------- REQUESTING BEEHIVE LUMINOSITY! ----------------\n\r", __func__);
-     }
-
-     ret = ble_receive_packet(&rx_packet, h);
-     if(ret < 0) {
-        fprintf(stderr, "Fail to get BeeHive environment luminosity.\n");
-     }else {
-        printf("%s:-------------- GOT BEEHIVE LUMINOSITY! ----------------\n\r", __func__);
-        h->data_env.luminosity = *((uint32_t *)&rx_packet.pack_data[0]);
-        printf("%s:-------------- VALUE IS: %d [Lux] ----------------\n\r", __func__, h->data_env.luminosity);
-     }
+    /* gets the luminosity from the beehive environment */
+    tx_packet.id = k_get_lumi;
+    /* dispatch packet */
+    ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, &tx_packet , sizeof(ble_data_t));
+    if(ret) {
+        printf("%s: packet failed to send! \n\r", __func__);
+        ret = -1;
+    }
+    printf("%s:-------------- REQUESTING BEEHIVE LUMINOSITY! ----------------\n\r", __func__);
+    
 }
 
 /**
@@ -306,7 +289,7 @@ static void ble_device_handle_acquisition(struct ble_conn_handle *h)
  *  @param
  *  @return
  */
-static void ble_discover_service_and_enable_listening(struct ble_conn_handle *h);
+static void ble_discover_service_and_enable_listening(struct ble_conn_handle *h)
 {
     int ret;
 
@@ -322,7 +305,7 @@ static void ble_discover_service_and_enable_listening(struct ble_conn_handle *h)
 	}
 
 	for (int i = 0; i < h->services_count; i++) {
-		gattlib_uuid_to_string(&h->services[i].uuid, h->uuid_str, sizeof(uuid_str));
+		gattlib_uuid_to_string(&h->services[i].uuid, h->uuid_str, sizeof(h->uuid_str));
 
 		printf("%s: service[%d] start_handle:%02x end_handle:%02x uuid:%s\n",__func__, i,
 				h->services[i].attr_handle_start, h->services[i].attr_handle_end,
@@ -335,7 +318,7 @@ static void ble_discover_service_and_enable_listening(struct ble_conn_handle *h)
 		goto cleanup;
 	}
 	for (int i = 0; i < h->characteristics_count; i++) {
-		gattlib_uuid_to_string(&h->characteristics[i].uuid, h->uuid_str, sizeof(uuid_str));
+		gattlib_uuid_to_string(&h->characteristics[i].uuid, h->uuid_str, sizeof(h->uuid_str));
 
 		printf("%s: characteristic[%d] properties:%02x value_handle:%04x uuid:%s\n", __func__, i,
 				h->characteristics[i].properties, h->characteristics[i].value_handle,
@@ -346,9 +329,20 @@ static void ble_discover_service_and_enable_listening(struct ble_conn_handle *h)
     /* enable listening by setting nofitication and read characteristic
      * bitmask
      */
-    uint16_t enable_notification = 0x0001;
-	gattlib_write_char_by_handle(h->ble_conn_handle, BLE_NOTI_HANDLE, &enable_notification, sizeof(enable_notification));
-    gattlib_register_notification(h->ble_conn_handle, ble_rx_handler, h);
+    uint16_t char_prop = GATTLIB_CHARACTERISTIC_WRITE_WITHOUT_RESP;
+
+	ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE+1, &char_prop, sizeof(char_prop));
+    if(ret) {
+		fprintf(stderr, "failed set tx characteristic properties.\n");        
+    }
+
+    char_prop = 0x0001;
+	ret = gattlib_write_char_by_handle(h->conn_handle, BLE_NOTI_HANDLE, &char_prop, sizeof(char_prop));
+    if(ret) {
+		fprintf(stderr, "failed set noti characteristic properties.\n");        
+    }
+    gattlib_register_notification(h->conn_handle, ble_rx_handler, h);
+
 
 cleanup:
     return;
@@ -364,6 +358,12 @@ cleanup:
 static void *ble_device_manager_thread(void *args)
 {
     struct ble_conn_handle *handle = args;
+ 
+    size_t stacksize = 0;
+    pthread_attr_getstacksize(&handle->ble_dev_att, &stacksize);
+    stacksize *= 10;
+    pthread_attr_setstacksize(&handle->ble_dev_att, &stacksize);
+
     FILE *fp_acq;
     FILE *fp_audio;
     char root_path[MAX_NAME_SIZE]={0};
@@ -396,9 +396,9 @@ static void *ble_device_manager_thread(void *args)
     assert(fp_acq != NULL);
 
     /* obtains device connection handle */
-    handle->conn_handle = gattlib_connect(NULL, handle->bd_addr, BDADDR_LE_PUBLIC, BT_SEC_LOW, 0, 0);
+    handle->conn_handle = gattlib_connect(NULL, handle->bd_addr, BDADDR_LE_PUBLIC, BT_SEC_LOW, 0, 200);
 	if (handle->conn_handle == NULL) {
-		handle->conn_handle = gattlib_connect(NULL, handle->bd_addr, BDADDR_LE_RANDOM, BT_SEC_LOW, 0, 0);
+		handle->conn_handle = gattlib_connect(NULL, handle->bd_addr, BDADDR_LE_RANDOM, BT_SEC_LOW, 0, 200);
 		if (handle->conn_handle == NULL) {
 			fprintf(stderr, "Fail to connect to the bluetooth device.\n");
 			goto cleanup;
@@ -413,21 +413,64 @@ static void *ble_device_manager_thread(void *args)
     printf("%s:---------- DISCOVERING BEEINFORMED EDGE BLE DATABASE -----------\n\r", __func__);
     ble_discover_service_and_enable_listening(handle);
     printf("%s:---------- DISCOVERED BEEINFORMED EDGE BLE DATABASE -----------\n\r", __func__);
+    usleep(BEEINFO_BLE_ACQ_PERIOD/10);
+
 
     /* connection estabilished, now just manages the device
      * until connection closes
      */
-     while(handle->conn_handle != NULL) {
-        printf("%s:-------------- TIME TO ACQUIRE DATA ----------------\n\r", __func__);
+     while(handle->should_run) {
         ble_device_handle_acquisition(handle);
         ble_device_handle_audio(handle, fp_audio);
         acq_file_append_val(&handle->data_env, fp_audio);
-        printf("%s:-------------- END OF ACQUISITION PROCESS ----------------\n\r", __func__);
+        handle->timestamp += BEEINFO_BLE_ACQ_PERIOD/(BEEINFO_BLE_ACQ_PERIOD /10);
+
+        printf("+---------------------------------------------------------------+\n\r");
+        printf("|                                                               |\n\r");
+        printf("|   BeeInformed - Hive - ID FC:D6:BD:10:0B:B2: Status:          |\n\r");
+        printf("    TIMESTAMP: %d [s]                                            \n\r",handle->timestamp);
+        printf("+------------------------------+--------------------------------+\n\r");
+        printf("|         ****                 |                                |\n\r");
+        printf("|        *  ***                |           |   |      -|        |\n\r");
+        printf("|        *  ***                |           |   |       |        |\n\r");
+        printf("|        *    *                |           |   |     --|        |\n\r");
+        printf("|        *  ***                |           |   |       |        |\n\r");
+        printf("|        *  ***                |           |   |    ---|        |\n\r");
+        printf("|       *      *               |         \\|/  |        |        |\n\r");
+        printf("|      *    *****              |             \\|/  ---- |        |\n\r");
+        printf("|      * ********              |                       |        |\n\r");
+        printf("|       ********               |           ____________|        |\n\r");
+        printf("|        ******                |                                |\n\r");
+        printf("|                              |                                |\n\r");
+        printf("|                              |                                |\n\r");
+        printf("   %d[mDEG]                         %d[Pa]                       \n\r", handle->data_env.temperature, handle->data_env.pressure);
+        printf("|                              |                                |\n\r");
+        printf("+---------------------------------------------------------------+\n\r");
+        printf("|                              |                                |\n\r");
+        printf("|           **                 |            ****                |\n\r");
+        printf("|          ****                |          *********             |\n\r");
+        printf("|          *****               |         *****    **            |\n\r");
+        printf("|          ******              |         *****    **            |\n\r");
+        printf("|         ********             |          ***** **              |\n\r");
+        printf("|        ***********           |           *******              |\n\r");
+        printf("|       **** *********         |           ******               |\n\r");
+        printf("|      ***     ********        |           *   **               |\n\r");
+        printf("|      ***    ********         |           *    *               |\n\r");
+        printf("|       *** **********         |           ******               |\n\r");
+        printf("|        ***********           |            ****                |\n\r");
+        printf("|          ******              |                                |\n\r");
+        printf("         %d[%%]                       %d[mLUX]                  \n\r", handle->data_env.humidity, handle->data_env.luminosity);
+        printf("+------------------------------+--------------------------------+\n\r");
+
+        printf("\n\r");
+        printf("\n\r");
         usleep(BEEINFO_BLE_ACQ_PERIOD);
      }
 
 cleanup:
     printf("%s:-------------- EDGE DEVICE THREAD TERMINATING! ----------------\n\r", __func__);
+    fclose(fp_audio);
+    fclose(fp_acq);
     return(NULL);
 }
 
@@ -456,9 +499,13 @@ static void ble_discovered_device(const char* addr, const char* name) {
         strcpy(&handle->bd_addr[0], addr);
         strcpy(&handle->device_name[0], addr);
         handle->new_device = ble_add_device_to_list(cfg, handle);
+        handle->should_run = true;
+
+        pthread_mutex_init(&handle->rx_sema.mutex, NULL);
+        pthread_cond_init(&handle->rx_sema.cvar, NULL);
 
         /* creates and starts the device thread */
-        ret = pthread_create(&handle->ble_device_thread, NULL,ble_device_manager_thread, handle);
+        ret = pthread_create(&handle->ble_device_thread, &handle->ble_dev_att,ble_device_manager_thread, handle);
         if(ret) {
             fprintf(stderr, "ERROR: Failed to start ble device manager.\n");
         }
@@ -477,19 +524,29 @@ static void *ble_connection_manager_thread(void *args)
     int ret;
     (void)args;
     printf("%s: starting beeinformed connection manager! \n\r", __func__);
+    size_t stacksize = 0;
+    pthread_attr_getstacksize(&ble_conn_att, &stacksize);
+    stacksize *= 10;
+    pthread_attr_setstacksize(&ble_conn_att, &stacksize);
+
+    
+
+
+    printf("%s:-----------------STARTING NEW BLE SCAN CICLE! -----------------------\n\r", __func__);
+    ret = gattlib_adapter_scan_enable(hci_adapter, ble_discovered_device, 
+                    BEEINFO_BLE_DEF_TIMEOUT);
+    if(ret) {
+        fprintf(stderr, "ERROR: Failed to scan.\n");
+    }
+    printf("%s:------------------SCANNING COMPLETE SLEEPING!-------------------------\n\r", __func__);
+    gattlib_adapter_scan_disable(hci_adapter);
+
+
     while(ble_conn_should_run) {
         /* now we start the discovery and create connections thread 
          * to each new device 
-         */
-        printf("%s:-----------------STARTING NEW BLE SCAN CICLE! -----------------------\n\r", __func__);
-        ret = gattlib_adapter_scan_enable(hci_adapter, ble_discovered_device, 
-                        BEEINFO_BLE_DEF_TIMEOUT);
-    
-        if(ret) {
-		    fprintf(stderr, "ERROR: Failed to scan.\n");
-        }
-        gattlib_adapter_scan_disable(hci_adapter);
-        printf("%s:------------------SCANNING COMPLETE SLEEPING!-------------------------\n\r", __func__);
+         */    
+
         usleep(BEEINFO_BLE_SCAN_SLEEP_TIME);
     }
 
@@ -501,8 +558,9 @@ static void *ble_connection_manager_thread(void *args)
          * free memory of all active connections before to 
          * kill the application 
          */
-        gattlib_disconnect(connection->conn_handle);
+        connection->should_run = false;
         pthread_join(connection->ble_device_thread, NULL);
+        gattlib_disconnect(connection->conn_handle);
 		LIST_REMOVE(ble_connections.lh_first, entries);
 		free(connection->services);
 		free(connection->characteristics);        
@@ -519,7 +577,6 @@ void beeinformed_app_ble_start(FILE *fp)
 {
     int ret = 0;
     assert(fp != NULL);
-    memset(&data_env, 0, sizeof(data_env));
 
     /* perform some basic initialization and open the bt adapter */
 	LIST_INIT(&ble_connections);
@@ -530,7 +587,7 @@ void beeinformed_app_ble_start(FILE *fp)
 	}
 
     /* creates and starts the connman thread */
-    ret = pthread_create(&ble_conn_thread, NULL,ble_connection_manager_thread, NULL);
+    ret = pthread_create(&ble_conn_thread, &ble_conn_att,ble_connection_manager_thread, NULL);
     if(ret) {
 		fprintf(stderr, "ERROR: Failed to start ble conn manager.\n");
         goto cleanup;        
