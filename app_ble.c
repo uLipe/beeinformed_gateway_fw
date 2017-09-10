@@ -185,7 +185,7 @@ static inline void ble_device_handle_acquisition(ble_device_handle_t *h)
     /* this should never happen */
     assert(h != NULL);
     ble_data_t packet = {0};
-    uint8_t mq_data[64];    
+    uint8_t mq_data[40];    
     ble_data_t *rx_packet = (ble_data_t *)&mq_data;
     
     int ret;
@@ -421,7 +421,7 @@ static void *ble_device_manager_thread(void *args)
 
     /* creates a messaging system to store messages */
     handle->attr.mq_flags = 0;
-    handle->attr.mq_maxmsg = 128;
+    handle->attr.mq_maxmsg = 1024;
     handle->attr.mq_msgsize = BLE_MESSAGE_SLOT_SIZE;
     handle->attr.mq_curmsgs = 0;
     
@@ -430,6 +430,8 @@ static void *ble_device_manager_thread(void *args)
     strcat(mq_str, handle->bd_addr);
     printf("%s: mqueue name: %s \n\r", __func__, mq_str);
     
+    /* close the mqueue before to use it, this will flushes the queue */
+    mq_unlink(mq_str);
     handle->mq = mq_open(mq_str, O_CREAT | O_RDWR, 0644, &handle->attr);
 
     if(handle->mq < 0) {
@@ -451,6 +453,8 @@ cleanup:
     fclose(fp_acq);
     timer_delete(handle->timer.timerid);
     mq_close(handle->mq);
+
+    mq_unlink(mq_str); 
     gattlib_disconnect(handle->conn_handle);
     free(handle);
     return(NULL);
