@@ -11,10 +11,13 @@
 /** scan timeout value */
 #define BEEINFO_BLE_DEF_TIMEOUT         2
 
+/** defines the messaging max slot size */
+#define BLE_MESSAGE_SLOT_SIZE	sizeof(ble_data_t)
+
 
 /** define the sleep period in seconds */
 #define BEEINFO_BLE_SCAN_SLEEP_TIME     (1000 * 500)
-#define BEEINFO_BLE_ACQ_PERIOD          (1000 * 100)
+#define BEEINFO_BLE_ACQ_PERIOD          (1000 * 1)
 
 /** characteristics handle */
 #define BLE_TX_HANDLE                   0x0010
@@ -152,10 +155,6 @@ static void ble_rx_handler(const uuid_t* uuid, const uint8_t* data, size_t data_
     //printf("%s: pack_amount: %d!! \n\r", __func__, dump.pack_amount);
     //printf("%s: payload_size: %d!! \n\r", __func__, dump.payload_size);
 
-    
-    //dev->attr.mq_flags = O_NONBLOCK;
-    //mq_setattr(dev->mq, &dev->attr, NULL);    
-    
     /* data received, store on queue for furthre processing */
     mqd_t mq;
     struct mq_attr attr;
@@ -166,11 +165,10 @@ static void ble_rx_handler(const uuid_t* uuid, const uint8_t* data, size_t data_
     strcat(mq_str, dev->bd_addr);
 
     mq = mq_open(mq_str,O_WRONLY, 0644, &attr);
-    mq_send(mq, (uint8_t *)&dump,  sizeof(dump) , 0);
+    if(mq_send(mq, (uint8_t *)&dump,  sizeof(dump) , 0) < 0) {
+        printf("%s: queue seems to be full! \n\r", __func__);    
+    }
     mq_close(mq);
-
-    //dev->attr.mq_flags = 0;
-    //mq_setattr(dev->mq, &dev->attr, NULL);    
 }
 
 
@@ -185,7 +183,7 @@ static inline void ble_device_handle_acquisition(ble_device_handle_t *h)
     /* this should never happen */
     assert(h != NULL);
     ble_data_t packet = {0};
-    uint8_t mq_data[40];    
+    uint8_t mq_data[sizeof(ble_data_t) * 2];    
     ble_data_t *rx_packet = (ble_data_t *)&mq_data;
     
     int ret;
@@ -194,9 +192,11 @@ static inline void ble_device_handle_acquisition(ble_device_handle_t *h)
     packet.id   = k_get_sensors;
 
     /* send the command to the current sensor node */
-	ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, &packet, sizeof(packet));
+    printf("%s: sending command to sensor node\n\r", __func__);            
+    ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE, &packet, sizeof(packet));
     if(ret) {
         fprintf(stderr, "failed to send command to device .\n"); 
+        h->should_run = false;        
         goto cleanup;       
     } else {
 
@@ -218,7 +218,7 @@ static inline void ble_device_handle_acquisition(ble_device_handle_t *h)
 
         if(rx_packet->type == k_command_packet) {
             /* a command packet here, indicate fault with communication, exit */
-            h->should_run;
+            h->should_run = false;
             goto cleanup;
         }
 
@@ -243,20 +243,27 @@ static inline void ble_device_handle_acquisition(ble_device_handle_t *h)
 
             if(mq_receive(h->mq, mq_data, sizeof(mq_data), NULL) < sizeof(rx_packet)) {
 
+
+               /* stops timer until packet processing */
+               h->timer.trigger.it_value.tv_sec = 0;        
+               timer_settime(h->timer.timerid, 0, &h->timer.trigger, NULL);        
+
+
                 if(rx_packet->type == k_command_packet) {
                     /* a command packet here, indicate fault with communication, exit */
-                    h->should_run;
+                    h->should_run = false;
                     goto cleanup;
                 }
         
-                /* stops timer until packet processing */
-                h->timer.trigger.it_value.tv_sec = 0;        
-                timer_settime(h->timer.timerid, 0, &h->timer.trigger, NULL);        
-
                 printf("%s: corrupt packet arrived, discarding!! \n\r", __func__);
                 h->should_run = false;
                 goto cleanup;                
             } 
+
+            /* stops timer until packet processing */
+            h->timer.trigger.it_value.tv_sec = 0;        
+            timer_settime(h->timer.timerid, 0, &h->timer.trigger, NULL);        
+
 
             if(!error) {
                 memcpy(ptr, &rx_packet->pack_data, rx_packet->payload_size);
@@ -326,14 +333,14 @@ static void ble_discover_service_and_enable_listening(ble_device_handle_t *h)
     /* enable listening by setting nofitication and read characteristic
      * bitmask
      */
-    uint16_t char_prop = GATTLIB_CHARACTERISTIC_WRITE_WITHOUT_RESP;
+    uint16_t char_prop = 0x000C;
 
 	ret = gattlib_write_char_by_handle(h->conn_handle, BLE_TX_HANDLE+1, &char_prop, sizeof(char_prop));
     if(ret) {
 		fprintf(stderr, "failed set tx characteristic properties.\n");        
     }
 
-    char_prop = 0x0001;
+    char_prop = 0x0003;
 	ret = gattlib_write_char_by_handle(h->conn_handle, BLE_NOTI_HANDLE, &char_prop, sizeof(char_prop));
     if(ret) {
 		fprintf(stderr, "failed set noti characteristic properties.\n");        
@@ -421,7 +428,7 @@ static void *ble_device_manager_thread(void *args)
 
     /* creates a messaging system to store messages */
     handle->attr.mq_flags = 0;
-    handle->attr.mq_maxmsg = 1024;
+    handle->attr.mq_maxmsg = 128;
     handle->attr.mq_msgsize = BLE_MESSAGE_SLOT_SIZE;
     handle->attr.mq_curmsgs = 0;
     

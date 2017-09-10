@@ -11,8 +11,6 @@
 
 /* binary version */
 typedef struct {
-	uint8_t battery_level;
-	uint32_t timestamp;
 	int32_t temperature;
 	uint32_t pressure;
 	uint32_t luminosity;

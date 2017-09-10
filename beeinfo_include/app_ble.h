@@ -8,10 +8,7 @@
  #define __APP_BLE_H
 
 /** maximum payload in bytes */
-#define PACKET_MAX_PAYLOAD 		15
-
-/** defines the messaging max slot size */
-#define BLE_MESSAGE_SLOT_SIZE	32
+#define PACKET_MAX_PAYLOAD 		16
 
 /** timeout to wait for ble communcation */
 #define BLE_COMM_TIMEOUT        10
@@ -46,7 +43,7 @@ typedef enum {
 typedef struct {
 	uint8_t type;
 	uint8_t id;
-	uint16_t pack_amount;
+	uint8_t pack_amount;
 	uint8_t payload_size;
 	uint8_t pack_data[PACKET_MAX_PAYLOAD];
 }ble_data_t;
