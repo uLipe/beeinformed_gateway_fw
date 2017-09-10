@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "beeinformed_gateway.h": "c",
+        "list.h": "c",
+        "queue.h": "c"
+    }
+}

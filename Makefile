@@ -12,14 +12,13 @@ OUTFILE?=beeinformed_fw
 # Add source directories:
 #
 
-
 #add main or other c file stuff
 SRC += $(wildcard *.c)
 
 #
 # Define linker script files:
 #
-LIBS = -lbluetooth  -lpthread  -lgattlib -lreadline
+LIBS = -lbluetooth  -lpthread  -lgattlib -lreadline -lrt
 
 #
 # .c to .o recursion magic:

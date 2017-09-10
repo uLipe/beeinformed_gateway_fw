@@ -14,14 +14,14 @@
 
 
  /** public functions */
-int acq_file_append_val(acqui_st_t *aq, FILE *f)
+int acq_file_append_val(acqui_st_t *aq, FILE *f, uint32_t timestamp)
 {
     int ret = 0;
 
     return(ret);
 }
 
-int acq_file_get_data(void *data, size_t size, uint32_t timestamp ,acq_data_tag_t tag)
+int acq_file_get_data(void *data, size_t size, uint32_t timestamp)
 {
     int ret = 0;
 

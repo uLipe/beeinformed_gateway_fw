@@ -11,6 +11,7 @@
 
 /** static variables */
 static FILE *cfg_fp = NULL;
+char cfg_path[] = "beeinformed/beeinformed.cfg";
 
 /**
  *  @fn app_exit()
@@ -23,8 +24,6 @@ static void app_exit(int arg)
     printf("--------------------%s: BeeInformed application was interrupted, exiting! --------------------------- \n\r", __func__);
     beeinformed_app_ble_finish();
     beeinformed_app_gps_finish();
-    beeinformed_app_cli_finish();
-    fclose(cfg_fp);
     printf("-----------------------------%s: BeeInformed is safe to exit! --------------------------------------- \n\r", __func__);
     exit(0);
 }
@@ -39,24 +38,24 @@ static void app_exit(int arg)
 int main(int argc, char **argv)
 {
     /* the first task is to create the directory which will store the acquisition files */
-    int err = mkdir("beeinformed",0777);
+    int err = mkdir("beeinformed",0644);
     if(err < 0 ) {
         printf("-----------------Restoring the BeeInformedApplication!------------------------------ \n\r");
     }else {
         printf("-----------------Creating the BeeHives monitoring environment!-----------------------\n\r");        
     }
 
-    cfg_fp = fopen("beeinformed/beeinformed.cfg", "awr");
+    /* creates the configuration file */
+    cfg_fp = fopen(cfg_path, "ab");
+    fclose(cfg_fp);
 
     /* registers exit signal */
     signal(SIGINT, app_exit);
 
-
     /* with config file, passes the control to ble manager */
     printf("----------------------------Starting the beeinformed subtasks!-----------------------\n\r");
-    beeinformed_app_ble_start(cfg_fp);
+    beeinformed_app_ble_start(cfg_path);
     beeinformed_app_gps_start();
-    beeinformed_app_cli_start(cfg_fp);
 
     for(;;) {
         usleep(MAIN_LOOP_SLEEP_PERIOD);

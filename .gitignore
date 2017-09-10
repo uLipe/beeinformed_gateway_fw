@@ -3,5 +3,5 @@
 *.d
 *.map
 *.hex
-*.vscode/*
-beeinformed/*
+*./vscode/*
+/beeinformed/*
